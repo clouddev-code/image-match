@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image Match</title>
+<style>
+  :root { --bg: #f7f7f8; --fg: #1d1d1f; --muted: #6b6b70; --card: #fff; --line: #ddd; --accent: #2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151517; --fg: #ececf0; --muted: #9a9aa2; --card: #212125; --line: #3a3a40; --accent: #60a5fa; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; line-height: 1.6; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { margin: 0 0 4px; font-size: 1.6rem; }
+  p.lead { margin: 0 0 24px; color: var(--muted); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  h2 { margin: 0 0 8px; font-size: 1.1rem; }
+  label { display: block; margin: 8px 0 4px; font-weight: 600; }
+  input[type=file] { max-width: 100%; }
+  button { margin-top: 12px; padding: 8px 20px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-size: 1rem; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 12px; }
+  .item { text-align: center; font-size: .85rem; }
+  .item img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+  .score { font-weight: 700; font-size: 1rem; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  .error { color: #dc2626; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Image Match</h1>
+  <p class="lead">CLIP で画像を数値に変えて、似ている画像を探します。アップロードした画像は保存しません。</p>
+
+  <section id="search" hidden>
+    <h2>ギャラリーから探す</h2>
+    <label for="search-query">画像を 1 枚選ぶ</label>
+    <input id="search-query" type="file" accept="image/*">
+    <div><button id="search-run" disabled>探す</button></div>
+    <div id="search-result" class="grid"></div>
+  </section>
+
+  <section>
+    <h2>手元の画像どうしを比べる</h2>
+    <label for="compare-query">基準の画像</label>
+    <input id="compare-query" type="file" accept="image/*">
+    <label for="compare-candidates">比べる画像（20 枚まで）</label>
+    <input id="compare-candidates" type="file" accept="image/*" multiple>
+    <div><button id="compare-run" disabled>比べる</button></div>
+    <div id="compare-result" class="grid"></div>
+  </section>
+
+  <p class="muted">モデル: OpenCLIP ViT-B-32（LAION-2B）</p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+
+// 送る前にブラウザで縮小して JPEG にする。HEIC もブラウザが読めればここで変換される
+async function shrink(file, max = 512) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+}
+
+async function post(url, form) {
+  const res = await fetch(url, { method: "POST", body: form });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.detail || res.statusText);
+  return body.results;
+}
+
+function render(target, items) {
+  target.replaceChildren(...items.map(({ src, label, score }) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = label;
+    const s = document.createElement("div");
+    s.className = "score";
+    s.textContent = `${(score * 100).toFixed(1)}`;
+    const name = document.createElement("div");
+    name.className = "muted";
+    name.textContent = label;
+    div.append(img, s, name);
+    return div;
+  }));
+}
+
+function showError(target, err) {
+  const p = document.createElement("p");
+  p.className = "error";
+  p.textContent = err.message;
+  target.replaceChildren(p);
+}
+
+async function run(button, target, task) {
+  button.disabled = true;
+  target.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: "計算しています…" }));
+  try { await task(); } catch (err) { showError(target, err); } finally { button.disabled = false; }
+}
+
+$("search-query").onchange = () => { $("search-run").disabled = !$("search-query").files.length; };
+$("search-run").onclick = () => run($("search-run"), $("search-result"), async () => {
+  const form = new FormData();
+  form.append("query", await shrink($("search-query").files[0]), "query.jpg");
+  const results = await post("/api/search", form);
+  render($("search-result"), results.map((r) => ({ src: `/gallery/${encodeURIComponent(r.name)}`, label: r.name, score: r.score })));
+});
+
+const updateCompare = () => {
+  $("compare-run").disabled = !($("compare-query").files.length && $("compare-candidates").files.length);
+};
+$("compare-query").onchange = updateCompare;
+$("compare-candidates").onchange = updateCompare;
+$("compare-run").onclick = () => run($("compare-run"), $("compare-result"), async () => {
+  const files = [...$("compare-candidates").files];
+  if (files.length > 20) throw new Error("比べる画像は 20 枚までにしてください");
+  const form = new FormData();
+  form.append("query", await shrink($("compare-query").files[0]), "query.jpg");
+  for (const f of files) form.append("candidates", await shrink(f), f.name);
+  const results = await post("/api/compare", form);
+  render($("compare-result"), results.map((r) => ({ src: URL.createObjectURL(files[r.index]), label: r.name, score: r.score })));
+});
+
+fetch("/api/gallery").then((r) => r.json()).then(({ images }) => { $("search").hidden = !images.length; });
+</script>
+</body>
+</html>

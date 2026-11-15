@@ -1,0 +1,27 @@
+[project]
+name = "image-match"
+version = "0.1.0"
+description = "CLIP で画像の類似度を判定する oss-showcase 向けアプリ"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "pillow>=10.4",
+    "open-clip-torch>=2.26",
+    "torch>=2.4",
+    "torchvision>=0.19",
+]
+
+[tool.uv]
+package = false
+
+# Linux（コンテナ）では CUDA なしの CPU 版 torch を使い、イメージを小さくする
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
